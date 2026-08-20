@@ -1,3 +1,14 @@
+/*
+ * ap600u.c
+ * - /dev/input/eventX AP600U의 eventX값 찾고 EV_MSC MSC_SCAN 스캔코드 매핑
+ * - 0x000c0601: BTN_STYLUS2 1회 DOWN&delay60ms&UP, if BTN_STYLUS=DOWN이면 UP
+ * - 0x000c0612: BTN_STYLUS2 DOWN 지속 유지
+ * - 0x000c0613: BTN_STYLUS DOWN 지속 유지
+ * - /dev/input/event6 (실제 펜) 좌표 및 필압 정상 매핑
+ */
+
+// AP600U, 2터치시 버튼1회누름, 아래슬라이드시 다른입력 할때까지 버튼누름, 
+
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,7 +48,10 @@ void cleanup(int sig) {
         close(fd_pen);
     }
     for (int i = 0; i < remote_count; i++) {
-        if (fd_remotes[i] >= 0) close(fd_remotes[i]);
+        if (fd_remotes[i] >= 0) {
+            ioctl(fd_remotes[i], EVIOCGRAB, 0); // 🚀 리모컨 가로채기 해제 추가
+            close(fd_remotes[i]);
+        }
     }
     if (fd_uin >= 0) {
         ioctl(fd_uin, UI_DEV_DESTROY);
@@ -54,7 +68,8 @@ int find_pen_device(const char *keyword) {
 
     for (int i = 0; i < 32; i++) {
         snprintf(dev_path, sizeof(dev_path), "/dev/input/event%d", i);
-        int fd = open(dev_path, O_RDONLY | O_NONBLOCK);
+        // 🚀 EVIOCGRAB 수행을 위해 O_RDWR 권한으로 변경
+        int fd = open(dev_path, O_RDWR | O_NONBLOCK);
         if (fd < 0) continue;
 
         memset(dev_name, 0, sizeof(dev_name));
@@ -76,7 +91,8 @@ void find_remote_devices(const char *keyword) {
 
     for (int i = 0; i < 32 && remote_count < MAX_REMOTES; i++) {
         snprintf(dev_path, sizeof(dev_path), "/dev/input/event%d", i);
-        int fd = open(dev_path, O_RDONLY | O_NONBLOCK);
+        // 🚀 EVIOCGRAB 수행을 위해 O_RDWR 권한으로 변경
+        int fd = open(dev_path, O_RDWR | O_NONBLOCK);
         if (fd < 0) continue;
 
         memset(dev_name, 0, sizeof(dev_name));
@@ -109,7 +125,7 @@ int main() {
         return 1;
     }
 
-    // 2. uinput 노드 자동 탐색 (/dev/uinput 또는 /dev/misc/uinput)
+    // 2. uinput 노드 자동 탐색
     const char *uinput_paths[] = {"/dev/uinput", "/dev/misc/uinput"};
     for (int i = 0; i < 2; i++) {
         fd_uin = open(uinput_paths[i], O_WRONLY | O_NONBLOCK);
@@ -186,11 +202,20 @@ int main() {
         cleanup(0);
     }
 
+    // 펜 노드 가로채기
     if (ioctl(fd_pen, EVIOCGRAB, 1) < 0) {
-        fprintf(stderr, "[-] EVIOCGRAB 실패!\n");
+        fprintf(stderr, "[-] 펜 장치 EVIOCGRAB 실패!\n");
         cleanup(0);
     }
-    printf("[+] 가상 펜 생성 및 리모컨 노드 %d개 매핑 완료.\n", remote_count);
+
+    // 🚀 원본 입력 차단을 위해 리모컨 노드들도 전부 독점 가로채기(EVIOCGRAB) 추가
+    for (int i = 0; i < remote_count; i++) {
+        if (ioctl(fd_remotes[i], EVIOCGRAB, 1) < 0) {
+            fprintf(stderr, "[-] 경고: 리모컨 노드 %d EVIOCGRAB 실패\n", i);
+        }
+    }
+
+    printf("[+] 가상 펜 생성 및 리모컨 노드 %d개 가로채기 완료.\n", remote_count);
 
     // 7. poll 루프 구성
     struct pollfd fds[MAX_REMOTES + 1];
@@ -216,11 +241,10 @@ int main() {
                 while (read(fds[i].fd, &ev, sizeof(ev)) > 0) {
                     if (ev.type == EV_MSC && ev.code == MSC_SCAN) {
 
-                        // 1) 0x000c0601: BTN_STYLUS2 1회 클릭 (눌렀다 떼는 시간 지연 적용)
+                        // 1) 0x000c0601: BTN_STYLUS2 1회 클릭
                         if (ev.value == 0x000c0601) {
                             stylus2_pressed = 0;
 
-                            // BTN_STYLUS가 DOWN 상태인 경우 UP 전송
                             if (stylus_pressed) {
                                 stylus_pressed = 0;
                                 struct input_event btn_s_up = { .type = EV_KEY, .code = BTN_STYLUS, .value = 0 };
@@ -231,7 +255,6 @@ int main() {
                                 write(fd_uin, &syn_s, sizeof(syn_s));
                             }
 
-                            // A. BTN_STYLUS2 DOWN 전송
                             struct input_event btn_down = { .type = EV_KEY, .code = BTN_STYLUS2, .value = 1 };
                             struct input_event syn1     = { .type = EV_SYN, .code = SYN_REPORT,  .value = 0 };
                             gettimeofday(&btn_down.time, NULL);
@@ -239,10 +262,8 @@ int main() {
                             write(fd_uin, &btn_down, sizeof(btn_down));
                             write(fd_uin, &syn1, sizeof(syn1));
 
-                            // B. 사람이 물리적으로 누르는 시간 지연 (60ms)
                             usleep(HUMAN_CLICK_DELAY_US);
 
-                            // C. BTN_STYLUS2 UP 전송
                             struct input_event btn_up   = { .type = EV_KEY, .code = BTN_STYLUS2, .value = 0 };
                             struct input_event syn2     = { .type = EV_SYN, .code = SYN_REPORT,  .value = 0 };
                             gettimeofday(&btn_up.time, NULL);
