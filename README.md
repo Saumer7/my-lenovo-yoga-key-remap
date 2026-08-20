@@ -1,5 +1,5 @@
 # my-lenovo-yoga-key-remap
-태블릿 키보드와 펜 버튼 리맵핑.
+레노버 요가패드12.7의 전용키보드와 펜 버튼 리맵핑.
 
 keyboard : 전용키보드의 맨 윗 버튼들을 F1~F12로 리맵핑하고, Meta키를 누른 상태에선 원본키로 작동하게.  
 ap600u : 2번터치시 BTN_Stylus2클릭&모든버튼뗌, 아래슬라이드시 BTN_Stylus2유지, 위슬라이드시 BTN_Stylus1유지
