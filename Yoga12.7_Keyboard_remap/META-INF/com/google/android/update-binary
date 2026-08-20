@@ -1,0 +1,65 @@
+#!/system/bin/sh
+umask 022
+
+OUTFD=$2
+ZIPFILE=$3
+TMPDIR=/dev/tmp
+PERSISTDIR=/sbin/.magisk/mirror/persist
+
+rm -rf $TMPDIR 2>/dev/null
+mkdir -p $TMPDIR
+
+ui_print() {
+  echo "$1"
+}
+
+require_new_magisk() {
+  ui_print "May Not Support Your Magisk."
+}
+
+mount /data 2>/dev/null
+
+[ -f /data/adb/magisk/util_functions.sh ] || require_new_magisk
+. /data/adb/magisk/util_functions.sh
+
+setup_flashable
+
+mount_partitions
+
+api_level_arch_detect
+
+$BOOTMODE && boot_actions || recovery_actions
+
+unzip -o "$ZIPFILE" module.prop -d $TMPDIR >&2
+[ ! -f $TMPDIR/module.prop ] && abort "! Unable to extract zip file!"
+
+$BOOTMODE && MODDIRNAME=modules_update || MODDIRNAME=modules
+MODULEROOT=/data/adb/$MODDIRNAME
+MODID=$(grep_prop id $TMPDIR/module.prop)
+MODPATH=$MODULEROOT/$MODID
+MODNAME=$(grep_prop name $TMPDIR/module.prop)
+MODVER=$(grep_prop versionCode $TMPDIR/module.prop)
+
+[ -d $MODPATH ] && rm -rf $MODPATH
+mkdir -p "$MODPATH"
+
+ui_print "- Extracting module files"
+unzip -o "$ZIPFILE" -x 'META-INF/*' -d $MODPATH >&2
+
+set_perm_recursive $MODPATH 0 0 0755 0644
+
+. $MODPATH/customize.sh
+
+if $BOOTMODE; then
+  mktouch /data/adb/modules/$MODID/update
+  cp -af $MODPATH/module.prop /data/adb/modules/$MODID/module.prop
+fi
+
+rm -f $MODPATH/customize.sh
+
+cd /
+$BOOTMODE || recovery_cleanup
+rm -rf $TMPDIR
+
+ui_print "- Done"
+exit 0
