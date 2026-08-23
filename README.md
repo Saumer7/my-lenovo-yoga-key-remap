@@ -11,4 +11,4 @@ ap600u : 2번터치시 BTN_Stylus2클릭&모든버튼뗌, 아래슬라이드시 
 사용법 :  
 Magisk모듈 설치 후 재부팅 또는 모듈 설치파일 내 컴파일된 파일(keyboard, ap600u) 실행권한 준 뒤 터미널앱에서 실행.  
 키보드 Magisk모듈의 경우 F1~F12 비정상작동시 정상작동할 때까지 키보드 재연결&대기5초  
-키보드 Keymapper 설정파일은 해당 앱에서 import (expertmode 활성화 필요)
+키보드 Keymapper 설정파일은 해당 앱에서 import (expertmode 활성화 필요), PC에서 Autohotkey 스크립트 실행.
