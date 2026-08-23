@@ -1,10 +1,3 @@
-/*
- * keyboard.c
- * - Lenovo Keyboard Pack For Yoga Tab Keyboard 이벤트 감지
- * - 지정된 키 및 스캔코드(총 12개)를 F1~F12로 매핑, Left_Meta 누른채로 누르면 원본 동작
- */
-
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -206,6 +199,10 @@ int main() {
             wait_for_input_change();
             continue;
         }
+		
+		// 키보드 연결시 다른 서비스(Key Mapper expert mode)가 선점할 수 있도록 대기
+        printf("[+] 키보드 감지됨. KeyMapper가 먼저 선점하도록 2초간 대기합니다.\n");
+        sleep(2);
 
         // 3. uinput 생성 및 원본 키보드 독점 가로채기
         if (setup_uinput() < 0) {
@@ -215,10 +212,10 @@ int main() {
 
         for (int i = 0; i < keyboard_count; i++) {
             if (ioctl(fd_keyboards[i], EVIOCGRAB, 1) < 0) {
-                fprintf(stderr, "[-] 경고: 키보드 노드 %d EVIOCGRAB 실패\n", i);
+                fprintf(stderr, "[-] 경고: 키보드 노드 %d EVIOCGRAB 실패(keymapper expert mode때문이면 의도대로 작동한 것임)\n지금 F5~F6키, META+F5~F6키가 정상 작동하지 않으면 키보드를 재연결하세요\n", i);
             }
         }
-
+		
         printf("[+] 키보드 연결 감지: '%s' (노드 수: %d개) 가로채기 완료.\n", KEYBOARD_NAME_KEYWORD, keyboard_count);
 
         // 4. 폴링 및 이벤트 리매핑 루프
