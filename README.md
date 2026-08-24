@@ -2,7 +2,7 @@
 레노버 요가패드12.7(TB520FU) 버튼 리매핑.
 
 ### 키보드
-keymapper앱 설정 & Autohotkey스크립트 : 원격PC사용 중 Meta→LWin, RAlt→한영, RCtrl→Menu 리매핑. LAlt+Tab 작동케 함. 
+keymapper앱 설정 & Autohotkey스크립트 : 원격PC사용 중 Meta→LWin, RAlt→한영, RCtrl→Menu 리매핑. LAlt+Tab 작동케 함.  
 데몬파일 keyboard : ESC옆12키 → F1~F12 , Meta키를 누른 상태에선 원본키로 라매핑 (KeyMapper expert mode 켜진 상태에서만 작동).  
 
 ### 펜
