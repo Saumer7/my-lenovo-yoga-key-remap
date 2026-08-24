@@ -1,3 +1,10 @@
+// 리매핑 대상 : 윗줄 ESC 옆 버튼 12개 → F1~F12, META키 누른채로 누르면 본래 동작
+// 키보드 노드 수 : 키보드 분리시 0, 연결시 1, keymapperexpertmode사용시 +1.
+// KeyMapper앱 expertmode를 사용한다는 전제로 키보드 노드=2개여야 작업 - 
+// 키보드 재연결시 본 데몬이 KeyMapper expertmode보다 선적용되면 리매핑 문제가 생기기 때문.
+
+
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,6 +24,7 @@
 #define MAX_KEYBOARDS 8
 
 int fd_keyboards[MAX_KEYBOARDS];
+int fd_event_nums[MAX_KEYBOARDS];
 int keyboard_count = 0;
 int fd_uin = -1;
 
@@ -24,7 +32,6 @@ int current_mapped_key = -1;
 int leftmeta_pressed = 0;
 int leftmeta_forwarded = 0;
 
-// 세션 정리 (연결 해제 시 호출)
 void close_session() {
     for (int i = 0; i < keyboard_count; i++) {
         if (fd_keyboards[i] >= 0) {
@@ -52,7 +59,6 @@ void cleanup(int sig) {
     exit(0);
 }
 
-// 🚀 inotify 기반 /dev/input 변경 이벤트 대기 함수 (CPU 점유율 0%)
 void wait_for_input_change() {
     int inotify_fd = inotify_init();
     if (inotify_fd < 0) {
@@ -63,26 +69,27 @@ void wait_for_input_change() {
     int wd = inotify_add_watch(inotify_fd, "/dev/input", IN_CREATE | IN_ATTRIB);
     if (wd >= 0) {
         char buf[512];
-        read(inotify_fd, buf, sizeof(buf)); // 신규 장치 연결 시까지 무한 대기
+        read(inotify_fd, buf, sizeof(buf));
         inotify_rm_watch(inotify_fd, wd);
     }
     close(inotify_fd);
 }
 
-// 키보드 노드 탐색 (EVIOCGRAB을 위해 O_RDWR 권한으로 열기)
 void find_keyboard_devices(const char *keyword) {
     char dev_path[64];
     char dev_name[256];
 
     for (int i = 0; i < 32 && keyboard_count < MAX_KEYBOARDS; i++) {
         snprintf(dev_path, sizeof(dev_path), "/dev/input/event%d", i);
-        int fd = open(dev_path, O_RDWR | O_NONBLOCK); // 🚀 O_RDWR로 변경
+        int fd = open(dev_path, O_RDWR | O_NONBLOCK);
         if (fd < 0) continue;
 
         memset(dev_name, 0, sizeof(dev_name));
         if (ioctl(fd, EVIOCGNAME(sizeof(dev_name) - 1), dev_name) >= 0) {
             if (strstr(dev_name, keyword) != NULL) {
-                fd_keyboards[keyboard_count++] = fd;
+                fd_keyboards[keyboard_count] = fd;
+                fd_event_nums[keyboard_count] = i;
+                keyboard_count++;
                 continue;
             }
         }
@@ -187,38 +194,71 @@ int main() {
     signal(SIGINT, cleanup);
     signal(SIGTERM, cleanup);
 
-    printf("[+] inotify 기반 키보드 F1~F12 리매퍼 자동 대기 데몬 시작\n");
-
     while (1) {
-        // 1. 기존 세션 정돈 및 장치 탐색
         close_session();
         find_keyboard_devices(KEYBOARD_NAME_KEYWORD);
 
-        // 2. 키보드가 미연결 상태면 inotify 대기 (CPU 점유율 0%)
         if (keyboard_count == 0) {
+            printf("[-] 키보드 노드 수 = 0개. 연결시까지 대기.\n");
             wait_for_input_change();
             continue;
         }
-		
-		// 키보드 연결시 다른 서비스(Key Mapper expert mode)가 선점할 수 있도록 대기
-        printf("[+] 키보드 감지됨. KeyMapper가 먼저 선점하도록 2초간 대기합니다.\n");
-        sleep(2);
+        
+        // 노드 수가 2개여야 진행. 2개가 아니면(키보드 뺌) 0개가 되는지 확인.
+        if (keyboard_count != 2) {
+            int elapsed = 0;
+            while (keyboard_count != 2) {
+                if (keyboard_count == 0) {
+                    printf("[-] 키보드 연결 해제됨(노드 수 = 0개). 연결시까지 대기.\n");
+                    break;
+                }
+                
+                fprintf(stderr, "[-] 키보드 노드 수 = %d ≠ 2 \n", keyboard_count);
+                
+                if (elapsed >= 10) {
+                    fprintf(stderr, "[-] 본 데몬은 KepMapper앱 expertmode를 켜서 노드 수 = 2 여야 작동합니다. 대기합니다.\n");
+                    break;
+                }
+                
+                sleep(1);
+                elapsed += 1;
+                close_session();
+                find_keyboard_devices(KEYBOARD_NAME_KEYWORD);
+            }
+            
+            // 재확인 결과 여전히 노드 수가 2개가 아니라면(0이거나 10초 타임아웃) 대기 상태로 진입
+            if (keyboard_count != 2) {
+                wait_for_input_change();
+                continue;
+            }
+        }
 
-        // 3. uinput 생성 및 원본 키보드 독점 가로채기
+        //printf("[+] 키보드 연결 감지됨. KeyMapper가 선점하도록 2초간 대기.\n");
+        //sleep(2);
+
         if (setup_uinput() < 0) {
             wait_for_input_change();
             continue;
         }
-
+        
+        // EVIOCGRAB 실행 및 실패 횟수 측정
+        int fail_count = 0;
         for (int i = 0; i < keyboard_count; i++) {
             if (ioctl(fd_keyboards[i], EVIOCGRAB, 1) < 0) {
-                fprintf(stderr, "[-] 경고: 키보드 노드 %d EVIOCGRAB 실패(keymapper expert mode때문이면 의도대로 작동한 것임)\n지금 F5~F6키, META+F5~F6키가 정상 작동하지 않으면 키보드를 재연결하세요\n", i);
+                printf("[-] 키보드 노드 /dev/input/event%d EVIOCGRAB 실패 (KeyMapper expert mode 때문, 의도대로 작동한 것임)\n", fd_event_nums[i]);
+                fail_count++;
             }
         }
-		
-        printf("[+] 키보드 연결 감지: '%s' (노드 수: %d개) 가로채기 완료.\n", KEYBOARD_NAME_KEYWORD, keyboard_count);
+        // 만약 모든 노드에서 EVIOCGRAB이 성공해버린 경우 (실패 횟수가 0개인 경우)
+        if (fail_count == 0) {
+            fprintf(stderr, "[-] 경고: 모든 노드에서 EVIOCGRAB이 성공함. KeyMapper expert mode에 의해 실패했어야 함. 중지하고 대기합니다.\n");
+            close_session();
+            wait_for_input_change();
+            continue;
+        }
+        
+        printf("[+] 키보드 연결 감지: '%s' (노드 수: %d개) 정상작동중.\n", KEYBOARD_NAME_KEYWORD, keyboard_count);
 
-        // 4. 폴링 및 이벤트 리매핑 루프
         struct pollfd fds[MAX_KEYBOARDS];
         int disconnected = 0;
 
@@ -289,9 +329,6 @@ int main() {
                 }
             }
         }
-
-        printf("[!] 키보드 연결 해제 감지. 신규 장치 연결 대기 중...\n");
     }
-
     return 0;
 }
